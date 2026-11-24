@@ -1,0 +1,39 @@
+# How Vigiora runs this add-on. Vigiora Server and the Vigiora cloud check this file against the manifest, and
+# the rules are an allow-list: a key that is not allowed is refused. In short: no "$" variable anywhere (write
+# real values); a service with "build:" has no "image:"; no bind mounts at all (the add-on keeps files in a named
+# volume declared below, and code goes in the image); names are lower case letters, digits and "-"; every
+# environment value is written out. Run  vigiora-addon validate .  to see them all.
+#
+# What the server adds when it installs this file (the server address, the enrolment key file and the service name)
+# is not written here.
+volumes:
+  addon-state:                    # the token and each camera's learned view. Kept across updates, removed with the add-on.
+services:
+  tamper-watch:
+    build:
+      context: .                  # run.source is "build": the server builds this folder's Dockerfile
+    restart: unless-stopped
+    environment:
+      # The defaults. A service-wide setting of the same name on the server wins (see docs/how-to.md).
+      TAMPER_INTERVAL_SEC: "30"       # seconds between two frames of a camera
+      TAMPER_CONFIRM_SAMPLES: "3"     # a problem (or its end) must be seen this many times in a row
+      TAMPER_LEARN_SAMPLES: "10"      # frames used to learn a camera's normal day view (and its night view)
+      TAMPER_ADAPT_RATE: "0.02"       # how fast the learned view follows slow changes while all is well
+      TAMPER_COVERED: "on"            # report covered or dark cameras
+      TAMPER_BLURRED: "on"            # report blurred cameras
+      TAMPER_MOVED: "on"              # report moved cameras. Set "off" if most cameras are PTZ or patrol.
+      TAMPER_FLAT_SPREAD: "20"        # covered: brightness spread (5th to 95th percentile, 0-255) at most this
+      TAMPER_DARK_LEVEL: "16"         # covered: 95% of the picture at most this bright (0-255)
+      TAMPER_BLUR_RATIO: "0.6"        # blurred: sharpness below this share of the camera's normal
+      TAMPER_MOVED_MATCH: "0.4"       # moved: less than this share of the picture's areas still in place
+      TAMPER_GRAB_TIMEOUT_SEC: "10"   # give up on a camera's stream after this long
+      TAMPER_WORKERS: "2"             # cameras read at the same time
+      LOG_LEVEL: INFO
+    volumes:
+      - addon-state:/data
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

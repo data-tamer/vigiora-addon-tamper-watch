@@ -1,0 +1,106 @@
+# The manifest of a Vigiora add-on (format version 1).
+# The Vigiora cloud reads this file when you submit the repository, and shows most of it on your add-on's page.
+# Check it any time with:  vigiora-addon validate .
+# An unknown key anywhere is an error, so a typo cannot pass silently.
+
+manifest: 1                       # the format version; always 1 for now
+
+# ---- Identity -------------------------------------------------------------------------------------------
+id: tamper-watch                  # 3 to 40 characters: a-z, 0-9, hyphen, starting with a letter. Never changes.
+name: Tamper Watch                # 3 to 60 characters
+summary: Tells you when a camera is covered, blurred or turned away, and when its view is back to normal.   # 10 to 120 characters, one line
+version: 1.0.0                    # semantic version. It must be higher than your last approved version.
+author:
+  name: Vigiora
+  url: https://vigiora.com
+licence: Proprietary              # see LICENSE: use on a Vigiora Server whose account bought it
+homepage: https://github.com/data-tamer/vigiora-addon-tamper-watch
+categories: [vision]              # 1 to 3 of: vision, audio, sensors, automation, analytics, integration, other
+languages: [en]                   # languages of the README and the how-to
+
+# ---- Compatibility --------------------------------------------------------------------------------------
+vigiora:
+  min_version: 1.7.1              # the lowest Vigiora Server version it works with
+  addon_api: 1                    # the add-on API version; 1 is today's protocol
+
+# ---- Hardware: what the server checks before it installs. Every field is optional. -----------------------
+hardware:
+  arch: [amd64, arm64]            # amd64, arm64
+  os: [linux]                     # linux, macos, windows
+  cpu_min_cores: 1                # one frame per camera every 30 s: measured 0.3 s of CPU per frame (RTSP open, decode,
+                                  # checks) on an arm64 desktop; a Raspberry Pi 4 is a few times slower
+  ram_min_gb: 0.25                # measured 65 MB in use with 2 cameras (Python, numpy, OpenCV)
+  disk_min_gb: 0.5                # the image is 320 MB (arm64); the learned views are under 100 KB per camera
+  devices: []                     # usb, zigbee, bluetooth, serial, microphone, speaker
+  notes: CPU only. Reads one low-resolution frame per camera every 30 seconds, so it runs on a Raspberry Pi 4 (64-bit).   # at most 300 characters
+
+# ---- How it runs ----------------------------------------------------------------------------------------
+run:
+  kind: compose                   # the only kind today
+  compose: compose.yaml           # path in this repository
+  source: build                   # build: the server builds the image from this commit (see the Dockerfile)
+  privileged: false               # not needed
+  network: outbound               # it reads the server's API and the server's RTSP restream (go2rtc); nothing else
+  ports: []                       # it listens on none
+
+# ---- Permissions: ask for the least you need. The administrator sees this list before turning it on. -----
+permissions:
+  scopes: [cameras:read, streams:read, events:write]
+  # cameras:read   which cameras are assigned to it, and their tags
+  # streams:read   one frame of each assigned camera's low-resolution stream every 30 seconds
+  # events:write   the tamper:covered, tamper:blurred, tamper:moved and tamper:ok results
+
+# ---- Price ----------------------------------------------------------------------------------------------
+price:
+  model: one_off                  # free, per_camera_month, per_server_month, one_off
+  amount_usd: 5                   # 0.50 to 500 when it is not free
+
+# ---- Reserved for later phases. They are checked for shape now and not acted on yet. -----------------------
+events:                           # the server events this add-on wants. Today the kit polls for the first two.
+  - addon.assignment_changed
+  - addon.config_updated
+settings:                         # settings Vigiora will draw for the add-on (per server, per camera)
+  server:
+    - key: blur_ratio
+      type: number
+      label: Blurred below this share of normal sharpness
+      help: 0 to 1. Lower reports only stronger blur. Default 0.6.
+      default: 0.6
+      min: 0
+      max: 1
+    - key: moved_match
+      type: number
+      label: Moved below this share of the view still in place
+      help: 0 to 1. Lower reports only bigger moves. Default 0.4.
+      default: 0.4
+      min: 0
+      max: 1
+    - key: moved
+      type: switch
+      label: Report moved cameras
+      help: Turn it off when most of your cameras are PTZ or patrol.
+      default: true
+  camera:
+    - key: covered
+      type: switch
+      label: Report this camera covered or dark
+      help: Turn it off for a camera without night vision that films a dark place at night.
+      default: true
+    - key: blurred
+      type: switch
+      label: Report this camera blurred
+      default: true
+    - key: moved
+      type: choice
+      label: Report this camera moved
+      help: auto is off for a camera tagged ptz or patrol, on for the others.
+      default: auto
+      choices: [auto, "on", "off"]
+    - key: relearn
+      type: text
+      label: Learn the view again
+      help: Type any new text, for example today's date, after you moved the camera on purpose.
+      default: ""
+ui:                               # pages and panels the add-on adds to Vigiora
+  views: []
+labels: ["tamper:"]               # tamper:covered, tamper:blurred, tamper:moved, tamper:ok

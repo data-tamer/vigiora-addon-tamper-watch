@@ -1,0 +1,10 @@
+# Installed into the image before the add-on (see the Dockerfile), wheels only, checked against these hashes.
+# One hash per platform the add-on runs on: linux/amd64 (x86_64) and linux/arm64 (aarch64), Python 3.12.
+# To refresh: pip download --only-binary=:all: --no-deps --python-version 3.12 --platform manylinux_2_28_<arch> <pkg>==<v>
+# and  shasum -a 256 <wheel>.
+numpy==2.5.5 \
+    --hash=sha256:704d819265e5d1064d932968e9ee85fff2103ccc78c05b878c06943ba27b8507 \
+    --hash=sha256:a0750f2156d53446caca85663d0b65d67214e1664b9050454a731ea1418d176a
+opencv-python-headless==5.1.0.95 \
+    --hash=sha256:7d387d4a64abe0c737440d38b5a90822f9bbcc10c8ce06a35904d6ecf7a2fb30 \
+    --hash=sha256:11d9753e15b8b3c56e6aa765139f722ca19ff26016d43bc81035f5d122731a81

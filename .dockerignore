@@ -1,0 +1,10 @@
+.git
+.venv
+tests
+docs
+images
+tools
+secrets
+compose*.yaml
+__pycache__
+*.egg-info

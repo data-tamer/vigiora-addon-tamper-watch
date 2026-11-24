@@ -1,0 +1,15 @@
+# For trying the add-on on your own machine with Docker. Vigiora Server and the Vigiora cloud do not read this file.
+# It adds by hand what the server adds when it installs the add-on (see the add-on template's README, "How the server starts it").
+#   mkdir -p secrets && printf 'your-enrol-key' > secrets/enroll_key
+#   docker compose -f compose.yaml -f compose.local.yaml up --build
+# Change the address to your server's (a name or an IP the container can reach).
+services:
+  tamper-watch:
+    environment:
+      VIGIORA_ADDON_URL: http://host.docker.internal:8080
+      VIGIORA_ADDON_ENROLL_KEY_FILE: /run/secrets/enroll_key
+      VIGIORA_ADDON_SERVICE_NAME: addon-tamper-watch   # the server names an add-on "addon-" + its id
+    volumes:
+      - ./secrets/enroll_key:/run/secrets/enroll_key:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
