@@ -2,12 +2,12 @@
 
 ## What it does
 
-Tamper Watch checks each camera you assign to it once every 30 seconds. It posts a result when a camera becomes covered, blurred or moved, and another when the view is normal again:
+Tamper Watch checks each camera you assign to it once every 30 seconds. It posts a detection when a camera becomes covered, blurred or moved, and a result when the view is normal again:
 
 - `tamper:covered`: the picture is flat or dark (a hand, tape, a cap, paint).
 - `tamper:blurred`: the picture is much softer than this camera's normal (grease or spray on the lens, focus turned).
 - `tamper:moved`: the camera no longer shows its normal view (turned, knocked, pointed elsewhere).
-- `tamper:ok`: the problem has ended. The result says which problem it was and how long it lasted.
+- `tamper:ok`: the problem has ended. The result says which problem it was and how long it lasted. It is never an alert.
 
 A problem, and its end, must be seen on 3 checks in a row (about a minute and a half) before anything is posted.
 
@@ -22,11 +22,39 @@ A problem, and its end, must be seen on 3 checks in a row (about a minute and a 
 
 The first time a camera switches to black and white night vision, Tamper Watch learns its night view the same way. That night, for about 5 minutes, it again only reports covered.
 
+## Get an alert
+
+Covered, blurred and moved are posted as detections. A detection becomes an alert only when the camera has an alert rule for its label, and a rule matches one exact label. So, for each camera:
+
+1. Open the camera in Vigiora and find the Tamper Watch card.
+2. Under **Alert on detections**, turn on `tamper:covered`, `tamper:blurred` and `tamper:moved`. A label shows there once Tamper Watch has posted it on that camera at least once.
+3. Leave `tamper:ok` off. It is a plain result, not a detection, so an alert rule on it never fires: the end of a problem is not an alert.
+
+To set the rules before anything has happened, use the public API with an operator or admin key (scope `alerts:write`), once per label:
+
+```sh
+curl -X POST https://<your server>/api/v1/cameras/<camera id>/label-alert-rules \
+  -H "X-API-Key: <key>" -H "Content-Type: application/json" \
+  -d '{"label": "tamper:covered", "severity": "high"}'
+```
+
+An alert then shows on the Alerts page and reaches whatever that page reaches (notifications, webhooks, camera speakers, the briefing). It has no picture; open the camera's recording at that time to see the moment. In the public API it has `source: "addon-tamper-watch"`.
+
+Each alert has a confidence. It says how far past its limit the measurement went, on the sample that confirmed the problem:
+
+- covered: the larger of `1 - brightness_spread / 20` and `1 - brightness_p95 / 16`, counting only the test that holds
+- blurred: `1 - sharpness_ratio / 0.6`
+- moved: the larger of `1 - areas_in_place / 0.4` (when below 0.4) and, when the view was found again a little to one side, `(middle_best_shifted - 0.8) / 0.2`
+
+confidence = 0.5 + 0.49 x that margin, between 0.5 and 0.99. The limits are your settings, so with other limits the formula uses yours. Just past a limit reads 0.5; a black lens reads close to 0.99. The same number is in the result as `confidence`.
+
+**On a server older than 1.7.4.** Tamper Watch needs Vigiora Server 1.7.4 and does not install on older ones. If the server is older anyway (for example, restored from a backup), it refuses detections from add-ons: Tamper Watch then logs one line saying so and posts every change as a plain result for the rest of its run. Nothing is lost, but there are no alerts until the server is updated.
+
+**Too many alerts at once.** The server takes at most 30 detections a minute and 300 an hour from one add-on. Tamper Watch posts one per change, not one per check, so this is only reached with very many cameras changing at once. A refused change is kept and posted on the next check.
+
 ## Where the results show
 
-Each result is listed in the camera's events, with its label and the numbers that led to it.
-
-**Alerts: not yet.** Vigiora Server 1.7 raises alerts (the Alerts page, push notifications, email, chat and alert speakers) only for detections. Community add-ons cannot post detections there, so Tamper Watch's results are events, not alerts. The camera's label list does show `tamper:covered`, `tamper:blurred`, `tamper:moved` and `tamper:ok` once each has been posted, with an alert switch, but in Server 1.7 that switch does nothing for add-on results. Do not rely on it. Tamper Watch will post alerts as soon as the server allows add-ons to.
+Every result, `tamper:ok` included, is listed in the camera's events with its label and the numbers that led to it.
 
 Each result carries the numbers that led to it, for example:
 

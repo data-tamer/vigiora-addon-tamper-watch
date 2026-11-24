@@ -171,3 +171,37 @@ def test_a_broken_file_is_ignored(tmp_path):
     p.write_bytes(b"not a file")
     assert not CameraWatch(7, TH).load(p)
     assert not CameraWatch(7, TH).load(tmp_path / "missing.npz")
+
+
+# ---- confidence --------------------------------------------------------------------------------------------------
+
+def test_confidence_is_half_at_the_threshold_and_grows_with_the_margin():
+    from tamper_watch.detect import Thresholds
+    from tamper_watch.watch import confidence
+    th = Thresholds()
+    assert confidence("covered", {"brightness_spread": 20.0, "brightness_p95": 120.0}, th) == 0.5
+    assert confidence("covered", {"brightness_spread": 10.0, "brightness_p95": 120.0}, th) == pytest.approx(0.745, abs=0.006)
+    assert confidence("covered", {"brightness_spread": 30.0, "brightness_p95": 0.0}, th) == 0.99   # black: p95 decides
+    assert confidence("blurred", {"sharpness_ratio": 0.6}, th) == 0.5
+    assert confidence("blurred", {"sharpness_ratio": 0.3}, th) == pytest.approx(0.745, abs=0.006)
+    assert confidence("blurred", {"sharpness_ratio": 0.0}, th) == 0.99
+    assert confidence("moved", {"areas_in_place": 0.2, "middle_best_shifted": 0.5}, th) == pytest.approx(0.745, abs=0.006)
+    assert confidence("moved", {"areas_in_place": 0.0}, th) == 0.99
+    # found again shifted while most areas look in place: the shifted match decides
+    assert confidence("moved", {"areas_in_place": 0.9, "middle_best_shifted": 0.9}, th) == pytest.approx(0.745, abs=0.006)
+    # missing numbers never give more than the floor
+    assert confidence("moved", {"areas_in_place": None}, th) == 0.5
+    for v in (0.0, 0.1, 0.39, 0.4):
+        assert 0.5 <= confidence("moved", {"areas_in_place": v}, th) <= 0.99
+
+
+def test_a_confirmed_problem_carries_its_confidence_and_recovery_none(frames):
+    cw = learned_watch(frames)
+    clock = Clock()
+    out = feed(cw, [frames["black"]] * 3 + [frames["blurred"]] * 3 + [frames["moved"]] * 3 + [frames["normal"]] * 3,
+               clock=clock)
+    assert [t.label for t in out] == ["tamper:covered", "tamper:blurred", "tamper:moved", "tamper:ok"]
+    for t in out[:3]:
+        assert 0.5 <= t.confidence <= 0.99 and t.payload["confidence"] == t.confidence
+    assert out[-1].confidence is None and "confidence" not in out[-1].payload
+    assert out[-1].at == clock.t

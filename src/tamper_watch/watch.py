@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .detect import Measure, Thresholds, edge_match, is_covered, is_moved
+from .detect import SHIFT_MATCH, Measure, Thresholds, edge_match, is_covered, is_moved
 
 log = logging.getLogger("tamper_watch")
 
@@ -70,6 +70,44 @@ class Verdict:
 class Transition:
     label: str
     payload: dict
+    at: float = 0.0                     # when the change was confirmed (unix time)
+    confidence: float | None = None     # None for tamper:ok, which is not an alert
+
+
+#: Confidence of a confirmed problem: 0.5 right at the threshold, rising linearly to 0.99 at the far end.
+CONF_LOW, CONF_HIGH = 0.5, 0.99
+
+
+def _past(value: float | None, limit: float) -> float | None:
+    """How far below a "lower is worse" limit a value is, as a share of the limit: 0 at the limit, 1 at zero."""
+    if value is None or limit <= 0 or value > limit:
+        return None
+    return 1 - max(value, 0.0) / limit
+
+
+def confidence(kind: str, n: dict, th: Thresholds) -> float:
+    """How sure a confirmed problem is, from the numbers of the sample that confirmed it.
+
+    margin is how far past its threshold the measurement went, as a share of the room there is past it (0..1):
+      covered: the larger of 1 - brightness_spread / flat_spread and 1 - brightness_p95 / dark_level (each counted only
+               when that test holds)
+      blurred: 1 - sharpness_ratio / blur_ratio
+      moved:   the larger of 1 - areas_in_place / moved_match (when below it) and, when the view was found again
+               shifted, (middle_best_shifted - 0.8) / (1 - 0.8)
+    confidence = 0.5 + 0.49 * margin, clamped to 0.5..0.99 and rounded to 2 decimals. A problem only just past its
+    threshold reads 0.5; a black lens or a view that is all gone reads close to 0.99."""
+    margins: list[float] = []
+    if kind == COVERED:
+        margins += [_past(n.get("brightness_spread"), th.flat_spread), _past(n.get("brightness_p95"), th.dark_level)]
+    elif kind == BLURRED:
+        margins.append(_past(n.get("sharpness_ratio"), th.blur_ratio))
+    elif kind == MOVED:
+        margins.append(_past(n.get("areas_in_place"), th.moved_match))
+        shifted = n.get("middle_best_shifted")
+        if shifted is not None and shifted >= SHIFT_MATCH:
+            margins.append((shifted - SHIFT_MATCH) / (1 - SHIFT_MATCH))
+    m = max([x for x in margins if x is not None], default=0.0)
+    return round(min(CONF_HIGH, max(CONF_LOW, CONF_LOW + (CONF_HIGH - CONF_LOW) * m)), 2)
 
 
 class CameraWatch:
@@ -158,7 +196,7 @@ class CameraWatch:
         if prev == OK:
             return None
         return Transition("tamper:ok", {"state": OK, "previous": prev, "reason": reason,
-                                        "previous_lasted_sec": round(now - prev_since)})
+                                        "previous_lasted_sec": round(now - prev_since)}, at=now)
 
     # ---- the state machine ----------------------------------------------------
 
@@ -207,8 +245,11 @@ class CameraWatch:
         }
         if prev != OK:
             payload["previous_lasted_sec"] = round(now - prev_since)
+        conf = None if cand == OK else confidence(cand, v.numbers, self.th)
+        if conf is not None:
+            payload["confidence"] = conf
         log.info("camera %s: %s -> %s %s", self.camera_id, prev, cand, json.dumps(v.numbers))
-        return Transition(f"tamper:{cand}", payload)
+        return Transition(f"tamper:{cand}", payload, at=now, confidence=conf)
 
     # ---- saving -------------------------------------------------------------------
 

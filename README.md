@@ -1,6 +1,6 @@
 # Tamper Watch
 
-Tamper Watch reports when someone covers, blurs or turns one of your cameras, and again when the view is back to normal. The reports are listed in the camera's events (see "What it does not do" about alerts).
+Tamper Watch alerts you when someone covers, blurs or turns one of your cameras, and reports when the view is back to normal.
 
 ![Four drawn camera views: normal, covered, blurred and moved, with the label Tamper Watch posts for each](images/screenshot-1.png)
 
@@ -17,7 +17,13 @@ For every camera you assign to it, Tamper Watch takes one frame from the camera'
 
 It posts one result when a problem starts and one when it ends, not one every 30 seconds. A problem must be seen on 3 frames in a row before it is posted, and so must its end, so a single odd frame does nothing.
 
-Each result carries the numbers it measured and the limits it compared them with, so you can see why it was posted. Results are listed in the camera's events.
+Each result carries the numbers it measured and the limits it compared them with, so you can see why it was posted.
+
+## Alerts
+
+`tamper:covered`, `tamper:blurred` and `tamper:moved` are posted as detections. Turn on the alert for each of these labels on the camera, and they become alerts like Vigiora's own: the Alerts page, notifications, webhooks, camera speakers and the briefing. `tamper:ok` is only a result: the end of a problem never raises an alert. The how-to has the exact steps.
+
+Each alert has a confidence from 0.5 to 0.99: 0.5 when the measurement is just past its limit, close to 0.99 when it is far past it (a black lens, a view that is all gone). The alert has no picture; the camera's recording has the moment.
 
 ## How it decides
 
@@ -31,7 +37,6 @@ What it learned is kept in the add-on's own storage, so a restart or an update d
 
 ## What it does not do
 
-- **It does not send alerts or notifications yet.** Vigiora Server 1.7 raises alerts (the Alerts page, push, email, chat, alert speakers) only for detections, and it does not let community add-ons post detections. Tamper Watch's results are listed in the camera's events, but turning on an alert for a `tamper:` label in the camera's label list has no effect for now. Tamper Watch will raise real alerts as soon as Vigiora Server lets add-ons do it.
 - **It does not see PTZ cameras correctly.** A camera that pans, tilts or patrols moves on purpose, and Tamper Watch would report it as moved. Turn the moved test off for those cameras (see the how-to). Vigiora Server does not yet tell add-ons which cameras are PTZ, so Tamper Watch only knows if you tag the camera `ptz` or `patrol`, or turn the test off yourself.
 - **It does not look at recordings or sound.** It takes one frame every 30 seconds and needs 3 in a row. A camera covered for less than a minute is never reported, and one covered for less than about a minute and a half may not be.
 - **It does not report a camera that cannot be reached.** No frame means no verdict. Vigiora's own camera status tells you when a camera is offline.
@@ -47,7 +52,7 @@ What it learned is kept in the add-on's own storage, so a restart or an update d
 
 ## What it needs
 
-- Vigiora Server 1.7.1 or newer, on a Linux machine with native Docker (community add-ons install only on Linux servers for now).
+- Vigiora Server 1.7.4 or newer, on a Linux machine with native Docker (community add-ons install only on Linux servers for now).
 - 64-bit Linux, on amd64 or arm64. It runs on a Raspberry Pi 4 with a 64-bit system.
 - Little memory and CPU: 65 MB in use with 2 cameras, and about 0.3 seconds of CPU per camera every 30 seconds, measured on an arm64 desktop (a Raspberry Pi 4 is a few times slower). No graphics card.
 
@@ -56,6 +61,7 @@ What it learned is kept in the add-on's own storage, so a restart or an update d
 - **See your cameras** (`cameras:read`): to know which cameras you assigned to it, and their tags.
 - **Read video streams** (`streams:read`): to take one frame from each assigned camera's low-resolution stream.
 - **Add events and results** (`events:write`): to post `tamper:` results.
+- **Report alerts** (`alerts:write`): to post covered, blurred and moved as detections, so that the camera's alert rules can turn them into alerts.
 
 It reads frames only from your Vigiora server, never from the cameras directly, and sends nothing anywhere else.
 

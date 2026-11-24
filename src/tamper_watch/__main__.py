@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,8 @@ ADDON_ID = "tamper-watch"  # the same as "id" in vigiora-addon.yaml
 log = logging.getLogger("tamper_watch")
 #: Learned views are written at least this often (in samples) while they adapt, and at once when the state changes.
 SAVE_EVERY = 20
+#: What Vigiora Server before 1.7.4 answers to a detection from an add-on.
+NO_DETECTIONS = "this service does not report detections"
 #: Events kept for a later try when the server cannot take them.
 OUTBOX_MAX = 200
 
@@ -65,6 +68,9 @@ class TamperWatch:
         self.reachable: dict[int, bool] = {}
         self.url_ok: dict[int, str] = {}       # the address that worked last time
         self.outbox: list[tuple[int, Transition]] = []
+        #: False once the server said it takes no detections from add-ons (Vigiora Server before 1.7.4): problems
+        #: are then posted as plain results for the rest of the run.
+        self.detections = True
         self.rounds = 0
 
     # ---- events from the server ---------------------------------------------------
@@ -182,16 +188,39 @@ class TamperWatch:
             self.outbox.append((cam, t))
             del self.outbox[:-OUTBOX_MAX]
 
+    def body(self, cam: int, t: Transition) -> dict:
+        """What is posted for a change. covered, blurred and moved are detections, which the camera's alert rule for
+        that label turns into alerts; tamper:ok (and every change on a server that takes no detections from add-ons)
+        is a plain result, kept with the camera but never an alert."""
+        b = {"monitor_id": cam, "label": t.label, "payload": t.payload}
+        if t.confidence is not None and self.detections:
+            at = datetime.fromtimestamp(t.at, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            b["detection"] = {"confidence": t.confidence, "detected_at": at}
+        return b
+
     def flush(self) -> None:
+        """Posts the outbox in order. A 429 or a server that cannot be reached leaves the change at the head of the
+        outbox for the next round (the kit has already retried with backoff)."""
         while self.outbox:
             cam, t = self.outbox[0]
+            body = self.body(cam, t)
             try:
-                self.client.post_event(t.label, monitor_id=cam, payload=t.payload)
+                self.client.post_event(t.label, monitor_id=cam, payload=t.payload, detection=body.get("detection"))
             except Unauthorized:
                 raise
             except AddonError as e:
-                log.warning("cannot post %s for camera %s yet (%s); trying again next round", t.label, cam, e)
-                return
+                if "detection" in body and e.status == 400 and NO_DETECTIONS in e.message:
+                    self.detections = False
+                    log.warning("this Vigiora Server takes no detections from add-ons (it is older than 1.7.4): "
+                                "tamper problems are posted as results only and raise no alert; update the server")
+                    continue
+                if isinstance(e, Transient):
+                    log.warning("cannot post %s for camera %s yet (%s); trying again next round", t.label, cam, e)
+                    return
+                if isinstance(e, Forbidden):
+                    log.warning("not posting %s for camera %s: it is not assigned to me any more", t.label, cam)
+                else:
+                    log.error("the server refused %s for camera %s (%s); dropped", t.label, cam, e)
             self.outbox.pop(0)
 
     # ---- files --------------------------------------------------------------------

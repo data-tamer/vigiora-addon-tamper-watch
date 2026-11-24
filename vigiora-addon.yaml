@@ -20,7 +20,7 @@ languages: [en]                   # languages of the README and the how-to
 
 # ---- Compatibility --------------------------------------------------------------------------------------
 vigiora:
-  min_version: 1.7.1              # the lowest Vigiora Server version it works with
+  min_version: 1.7.4              # the lowest Vigiora Server version it works with (add-on alerts came in 1.7.4)
   addon_api: 1                    # the add-on API version; 1 is today's protocol
 
 # ---- Hardware: what the server checks before it installs. Every field is optional. -----------------------
@@ -45,10 +45,11 @@ run:
 
 # ---- Permissions: ask for the least you need. The administrator sees this list before turning it on. -----
 permissions:
-  scopes: [cameras:read, streams:read, events:write]
+  scopes: [cameras:read, streams:read, events:write, alerts:write]
   # cameras:read   which cameras are assigned to it, and their tags
   # streams:read   one frame of each assigned camera's low-resolution stream every 30 seconds
-  # events:write   the tamper:covered, tamper:blurred, tamper:moved and tamper:ok results
+  # events:write   post the tamper:covered, tamper:blurred, tamper:moved and tamper:ok results
+  # alerts:write   covered, blurred and moved are posted as detections, so a camera's alert rule can raise an alert
 
 # ---- Price ----------------------------------------------------------------------------------------------
 price:

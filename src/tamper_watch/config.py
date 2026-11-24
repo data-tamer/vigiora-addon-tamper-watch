@@ -30,7 +30,7 @@ NUMBERS: dict[str, tuple[float, float, float]] = {
 }
 SWITCHES = {"TAMPER_COVERED": True, "TAMPER_BLURRED": True, "TAMPER_MOVED": True}
 #: Tags that mark a camera that moves by design. A camera with one of these gets the "moved" test off unless its own
-#: setting says moved: on. Vigiora Server 1.7.1 does not tell add-ons whether a camera is PTZ; a tag is the way.
+#: setting says moved: on. Vigiora Server (1.7.4 included) does not tell add-ons whether a camera is PTZ; a tag is the way.
 PTZ_TAGS = ("ptz", "patrol")
 
 
