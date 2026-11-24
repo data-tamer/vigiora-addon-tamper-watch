@@ -22,9 +22,11 @@ A problem, and its end, must be seen on 3 checks in a row (about a minute and a 
 
 The first time a camera switches to black and white night vision, Tamper Watch learns its night view the same way. That night, for about 5 minutes, it again only reports covered.
 
-## Get an alert
+## Where the results show
 
-Each result is listed in the camera's events with the label above. To be alerted, make an alert rule on the camera for the label `tamper:covered`, and the same for `tamper:blurred` and `tamper:moved`. A rule matches the exact label, so make one per label. Add `tamper:ok` only if you also want to know when a problem ends.
+Each result is listed in the camera's events, with its label and the numbers that led to it.
+
+**Alerts: not yet.** Vigiora Server 1.7 raises alerts (the Alerts page, push notifications, email, chat and alert speakers) only for detections. Community add-ons cannot post detections there, so Tamper Watch's results are events, not alerts. The camera's label list does show `tamper:covered`, `tamper:blurred`, `tamper:moved` and `tamper:ok` once each has been posted, with an alert switch, but in Server 1.7 that switch does nothing for add-on results. Do not rely on it. Tamper Watch will post alerts as soon as the server allows add-ons to.
 
 Each result carries the numbers that led to it, for example:
 

@@ -1,6 +1,6 @@
 # Tamper Watch
 
-Tamper Watch tells you when someone covers, blurs or turns one of your cameras, and tells you again when the view is back to normal.
+Tamper Watch reports when someone covers, blurs or turns one of your cameras, and again when the view is back to normal. The reports are listed in the camera's events (see "What it does not do" about alerts).
 
 ![Four drawn camera views: normal, covered, blurred and moved, with the label Tamper Watch posts for each](images/screenshot-1.png)
 
@@ -17,7 +17,7 @@ For every camera you assign to it, Tamper Watch takes one frame from the camera'
 
 It posts one result when a problem starts and one when it ends, not one every 30 seconds. A problem must be seen on 3 frames in a row before it is posted, and so must its end, so a single odd frame does nothing.
 
-Each result carries the numbers it measured and the limits it compared them with, so you can see why it was posted. You can make alert rules on these results like on any other result in Vigiora.
+Each result carries the numbers it measured and the limits it compared them with, so you can see why it was posted. Results are listed in the camera's events.
 
 ## How it decides
 
@@ -31,6 +31,7 @@ What it learned is kept in the add-on's own storage, so a restart or an update d
 
 ## What it does not do
 
+- **It does not send alerts or notifications yet.** Vigiora Server 1.7 raises alerts (the Alerts page, push, email, chat, alert speakers) only for detections, and it does not let community add-ons post detections. Tamper Watch's results are listed in the camera's events, but turning on an alert for a `tamper:` label in the camera's label list has no effect for now. Tamper Watch will raise real alerts as soon as Vigiora Server lets add-ons do it.
 - **It does not see PTZ cameras correctly.** A camera that pans, tilts or patrols moves on purpose, and Tamper Watch would report it as moved. Turn the moved test off for those cameras (see the how-to). Vigiora Server does not yet tell add-ons which cameras are PTZ, so Tamper Watch only knows if you tag the camera `ptz` or `patrol`, or turn the test off yourself.
 - **It does not look at recordings or sound.** It takes one frame every 30 seconds and needs 3 in a row. A camera covered for less than a minute is never reported, and one covered for less than about a minute and a half may not be.
 - **It does not report a camera that cannot be reached.** No frame means no verdict. Vigiora's own camera status tells you when a camera is offline.

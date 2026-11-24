@@ -160,3 +160,35 @@ def test_config_defaults_match_compose():
     from pathlib import Path
     env = yaml.safe_load((Path(__file__).parent.parent / "compose.yaml").read_text())["services"]["tamper-watch"]["environment"]
     assert Config.load(env) == Config.load({})
+
+
+# ---- the shape of what is posted ------------------------------------------------------------------------------
+# Vigiora Server 1.7.x stores a result with a "detection" object in its detections table (which alert rules, the
+# Alerts page and notifications read) only for its own detection services: internal/handlers/halstream/handler.go
+# answers 400 "this service does not report detections" to any other service, add-ons included
+# (halcatalog.DetectionServices). So Tamper Watch posts plain results, which the server keeps in hal_events.
+
+def test_posted_body_is_a_plain_result(fake_vigiora, addon_client, cams, tmp_path):
+    app = make_app(addon_client, cams, tmp_path)
+    app.cameras = [1]
+    for _ in range(4):
+        app.sample_all()
+    cams.now[1] = cams.black
+    app.sample_all()
+    app.sample_all()
+    (e,) = fake_vigiora.events
+    body = e["body"]
+    assert set(body) == {"label", "monitor_id", "payload"}            # no "detection": the server would refuse it
+    assert body["label"] == "tamper:covered" and body["monitor_id"] == 1
+    p = body["payload"]
+    assert p["state"] == "covered" and p["previous"] == "ok"
+    assert set(p["measured"]) >= {"mode", "brightness_spread", "brightness_p95"}
+    assert p["thresholds"] == {"flat_spread": 20.0, "dark_level": 16.0, "blur_ratio": 0.6, "moved_match": 0.4}
+    assert p["confirmed_after_samples"] == 2 and p["interval_sec"] == 30.0
+
+
+def test_an_addon_cannot_post_a_detection(fake_vigiora, addon_client):
+    from vigiora_addon import AddonError
+    with pytest.raises(AddonError) as e:
+        addon_client.post_event("tamper:covered", monitor_id=1, payload={}, detection={"confidence": 1.0})
+    assert e.value.status == 400 and "does not report detections" in str(e.value)

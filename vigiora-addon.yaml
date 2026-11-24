@@ -8,7 +8,7 @@ manifest: 1                       # the format version; always 1 for now
 # ---- Identity -------------------------------------------------------------------------------------------
 id: tamper-watch                  # 3 to 40 characters: a-z, 0-9, hyphen, starting with a letter. Never changes.
 name: Tamper Watch                # 3 to 60 characters
-summary: Tells you when a camera is covered, blurred or turned away, and when its view is back to normal.   # 10 to 120 characters, one line
+summary: Reports when a camera is covered, blurred or turned away, and when its view is back to normal.   # 10 to 120 characters, one line
 version: 1.0.0                    # semantic version. It must be higher than your last approved version.
 author:
   name: Vigiora
