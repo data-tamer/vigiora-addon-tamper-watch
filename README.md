@@ -6,7 +6,7 @@ Tamper Watch alerts you when someone covers, blurs or turns one of your cameras,
 
 ## What it does
 
-For every camera you assign to it, Tamper Watch takes one frame from the camera's low-resolution stream every 30 seconds and checks three things.
+For every camera you assign to it, Tamper Watch asks your Vigiora server for one current frame every 30 seconds (the server reads it from the camera's low-resolution stream) and checks three things.
 
 | Result | When |
 |---|---|
@@ -54,12 +54,13 @@ What it learned is kept in the add-on's own storage, so a restart or an update d
 
 - Vigiora Server 1.7.4 or newer, on a Linux machine with native Docker (community add-ons install only on Linux servers for now).
 - 64-bit Linux, on amd64 or arm64. It runs on a Raspberry Pi 4 with a 64-bit system.
-- Little memory and CPU: 65 MB in use with 2 cameras, and about 0.3 seconds of CPU per camera every 30 seconds, measured on an arm64 desktop (a Raspberry Pi 4 is a few times slower). No graphics card.
+- Little memory and CPU: 65 MB in use with 2 cameras, and at most about 0.3 seconds of CPU per camera every 30 seconds (measured on an arm64 desktop when it read the camera's stream itself; one picture from the server costs less). A Raspberry Pi 4 is a few times slower. No graphics card.
+- Nothing on your network but the Vigiora server: it never connects to the cameras, so it works in the add-on's own container network.
 
 ## Permissions
 
 - **See your cameras** (`cameras:read`): to know which cameras you assigned to it, and their tags.
-- **Read video streams** (`streams:read`): to take one frame from each assigned camera's low-resolution stream.
+- **Read video streams** (`streams:read`): to get one frame of each assigned camera from the server every 30 seconds.
 - **Add events and results** (`events:write`): to post `tamper:` results.
 - **Report alerts** (`alerts:write`): to post covered, blurred and moved as detections, so that the camera's alert rules can turn them into alerts.
 

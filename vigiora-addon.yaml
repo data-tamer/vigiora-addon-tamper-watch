@@ -27,8 +27,9 @@ vigiora:
 hardware:
   arch: [amd64, arm64]            # amd64, arm64
   os: [linux]                     # linux, macos, windows
-  cpu_min_cores: 1                # one frame per camera every 30 s: measured 0.3 s of CPU per frame (RTSP open, decode,
-                                  # checks) on an arm64 desktop; a Raspberry Pi 4 is a few times slower
+  cpu_min_cores: 1                # one frame per camera every 30 s: measured 0.3 s of CPU per frame when reading RTSP
+                                  # (open, decode, checks) on an arm64 desktop; one JPEG from the server is less.
+                                  # A Raspberry Pi 4 is a few times slower
   ram_min_gb: 0.25                # measured 65 MB in use with 2 cameras (Python, numpy, OpenCV)
   disk_min_gb: 0.5                # the image is 320 MB (arm64); the learned views are under 100 KB per camera
   devices: []                     # usb, zigbee, bluetooth, serial, microphone, speaker
@@ -40,14 +41,14 @@ run:
   compose: compose.yaml           # path in this repository
   source: build                   # build: the server builds the image from this commit (see the Dockerfile)
   privileged: false               # not needed
-  network: outbound               # it reads the server's API and the server's RTSP restream (go2rtc); nothing else
+  network: outbound               # the server's API only (frames come from GET /api/hal/frame); nothing else
   ports: []                       # it listens on none
 
 # ---- Permissions: ask for the least you need. The administrator sees this list before turning it on. -----
 permissions:
   scopes: [cameras:read, streams:read, events:write, alerts:write]
   # cameras:read   which cameras are assigned to it, and their tags
-  # streams:read   one frame of each assigned camera's low-resolution stream every 30 seconds
+  # streams:read   one frame of each assigned camera every 30 seconds, from the server
   # events:write   post the tamper:covered, tamper:blurred, tamper:moved and tamper:ok results
   # alerts:write   covered, blurred and moved are posted as detections, so a camera's alert rule can raise an alert
 

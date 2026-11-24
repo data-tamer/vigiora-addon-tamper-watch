@@ -1,9 +1,13 @@
 """The whole add-on against the kit's fake Vigiora server, with frames from a fake grabber instead of RTSP."""
+import json
 import re
 import threading
 
+import cv2
+
 import pytest
 import scenes as S
+from vigiora_addon.testing import FakeVigiora
 
 from tamper_watch.__main__ import TamperWatch, run
 from tamper_watch.config import Config
@@ -12,7 +16,8 @@ ENV = {"TAMPER_LEARN_SAMPLES": "4", "TAMPER_CONFIRM_SAMPLES": "2", "TAMPER_GRAB_
 
 
 class Cameras:
-    """What each camera "sends": a frame per camera id, or None for a camera that does not answer."""
+    """What each camera "sends" through the fake server's GET /api/hal/frame (Vigiora Server 1.7.4): a frame, None for
+    a camera that does not answer (503), or a (status, retry_after) pair. `rtsp` is what the RTSP fallback reads."""
 
     def __init__(self):
         w = S.world(3)
@@ -20,17 +25,62 @@ class Cameras:
         self.moved = S.view(w, dx=12)
         self.black = S.flat((0, 0, 0), 1)
         self.now = {1: self.normal, 2: self.normal}
-        self.urls = []
+        self.urls = []          # every frame asked for: "/cam<N>" from the server, RTSP addresses from the fallback
+        self.widths = []
+        self.rtsp = {}
 
     def grab(self, url, timeout):
         self.urls.append(url)
         cam = int(url.rsplit("/cam", 1)[1].split("_")[0])
-        return self.now.get(cam)
+        return self.rtsp.get(cam)
+
+    def serve(self, fake, h, q):
+        """The fake server's side of GET /api/hal/frame, with the statuses and headers of Vigiora Server 1.7.4."""
+        t = fake._auth(h)
+        if t is None:
+            return
+        cam = int(q["monitor_id"][0])
+        self.urls.append(f"/cam{cam}")
+        self.widths.append(q.get("width", [None])[0])
+        if cam not in fake._cameras:
+            return send(fake, h, 404, {"error": "Camera not found"})
+        if cam not in fake._assigned(t):
+            return send(fake, h, 403, {"error": "Token not assigned to this monitor"})
+        v = self.now.get(cam)
+        if v is None:
+            return send(fake, h, 503, {"error": "No frame from the camera"}, {"Retry-After": "10"})
+        if isinstance(v, tuple):
+            return send(fake, h, v[0], {"error": "Too many frame requests"}, {"Retry-After": str(v[1])})
+        ok, jpg = cv2.imencode(".jpg", v, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        send(fake, h, 200, jpg.tobytes(), {"X-Vigiora-Frame-At": "2026-11-24T08:15:02Z"}, "image/jpeg")
+
+
+def send(fake, h, status, body, headers=None, ctype="application/json"):
+    raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+    h.send_response(status)
+    h.send_header("Content-Type", ctype)
+    h.send_header("Content-Length", str(len(raw)))
+    for k, v in (headers or {}).items():
+        h.send_header(k, v)
+    h.end_headers()
+    h.wfile.write(raw)
+    with fake._cond:
+        fake._requests.append((h.command, h.path, status))
+        fake._cond.notify_all()
 
 
 @pytest.fixture
-def cams():
-    return Cameras()
+def cams(monkeypatch):
+    c = Cameras()
+    route = FakeVigiora._route
+
+    def with_frames(self, h, method, path, q):
+        if method == "GET" and path == "/api/hal/frame":
+            return c.serve(self, h, q)
+        return route(self, h, method, path, q)
+
+    monkeypatch.setattr(FakeVigiora, "_route", with_frames)
+    return c
 
 
 def make_app(client, cams, tmp_path, env=ENV):
@@ -69,9 +119,9 @@ def test_covered_then_ok_against_the_fake_server(fake_vigiora, running, cams):
     assert labels(fake_vigiora, 2) == []
 
 
-def test_reads_the_low_resolution_stream_first(fake_vigiora, running, cams):
-    assert fake_vigiora.wait_for(lambda f: len(cams.urls) >= 2, timeout=10)
-    assert cams.urls[0].endswith("_sub")
+def test_frames_come_from_the_server(fake_vigiora, running, cams):
+    assert fake_vigiora.wait_for(lambda f: len(cams.urls) >= 4, timeout=10)
+    assert set(cams.urls) == {"/cam1", "/cam2"} and set(cams.widths) == {"640"}   # no RTSP by default
 
 
 def test_an_unreachable_camera_is_not_covered(fake_vigiora, running, cams):
@@ -244,3 +294,97 @@ def test_a_refused_change_is_dropped_not_retried_forever(fake_vigiora, new_serve
     fake_vigiora.fail_next(1, status=400, path_prefix="/api/hal/events")
     app.sample_all()
     assert not app.outbox and app.detections is True
+
+
+# ---- frames from the server: GET /api/hal/frame (Vigiora Server 1.7.4) ---------------------------------------------
+
+def test_fetch_frame_answers(fake_vigiora, addon_client, cams):
+    from tamper_watch.frames import fetch_frame
+    r = fetch_frame(addon_client, 1)
+    assert r.status == 200 and r.frame.shape == cams.normal.shape and r.at == "2026-11-24T08:15:02Z"
+    cams.now[1] = None
+    r = fetch_frame(addon_client, 1)
+    assert (r.status, r.frame, r.retry_after, r.unreachable) == (503, None, 10.0, True)
+    assert "No frame from the camera" in r.why
+    cams.now[1] = (429, 3)
+    r = fetch_frame(addon_client, 1)
+    assert (r.status, r.retry_after, r.unreachable) == (429, 3.0, False)
+    fake_vigiora.assign([2])
+    r = fetch_frame(addon_client, 1)
+    assert r.status == 403 and r.unreachable and "not assigned" in r.why
+    r = fetch_frame(addon_client, 99)
+    assert r.status == 404
+
+
+def test_fetch_frame_stops_on_a_revoked_token(fake_vigiora, addon_client, cams):
+    from vigiora_addon import Unauthorized
+    from tamper_watch.frames import fetch_frame
+    fake_vigiora.revoke_all_tokens()
+    with pytest.raises(Unauthorized):
+        fetch_frame(addon_client, 1)
+
+
+def warm(app, n=4):
+    app.cameras = [1]
+    for _ in range(n):
+        app.sample_all()
+
+
+def test_an_offline_camera_gets_no_verdict_and_one_log_line(fake_vigiora, addon_client, cams, tmp_path, caplog):
+    caplog.set_level("INFO", logger="tamper_watch")
+    app = make_app(addon_client, cams, tmp_path)
+    warm(app)
+    cams.now[1] = None                                   # 503: the server got no frame from the camera
+    for _ in range(6):
+        app.sample_all()
+    assert labels(fake_vigiora) == [] and app.reachable[1] is False and app.watches[1].state == "ok"
+    assert sum("no picture" in r.getMessage() for r in caplog.records) == 1
+    assert not any(u.startswith("rtsp") for u in cams.urls)    # the RTSP fallback is off by default
+    cams.now[1] = cams.normal
+    app.sample_all()
+    assert app.reachable[1] is True and sum("picture back" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_rate_limit_skips_the_camera_without_a_verdict(fake_vigiora, addon_client, cams, tmp_path):
+    app = make_app(addon_client, cams, tmp_path)
+    warm(app)
+    cams.now[1] = (429, 60)
+    app.sample_all()
+    n = len(cams.urls)
+    app.sample_all()                                     # within Retry-After: not even asked
+    assert len(cams.urls) == n and app.reachable[1] is True and labels(fake_vigiora) == []
+    app.not_before.clear()                               # Retry-After over
+    cams.now[1] = cams.black
+    app.sample_all()
+    app.sample_all()
+    assert len(cams.urls) == n + 2 and labels(fake_vigiora) == ["tamper:covered"]
+
+
+def test_a_camera_not_assigned_any_more_gets_no_verdict(fake_vigiora, addon_client, cams, tmp_path):
+    app = make_app(addon_client, cams, tmp_path, env={**ENV, "TAMPER_RTSP_FALLBACK": "on"})
+    warm(app)
+    fake_vigiora.assign([2])                             # 403 on the frame (stream config is cached)
+    app.sample_all()
+    app.sample_all()
+    assert labels(fake_vigiora) == [] and app.reachable[1] is False
+    assert not any(u.startswith("rtsp") for u in cams.urls)    # no RTSP for a camera the server refuses
+
+
+def test_rtsp_fallback_when_switched_on(fake_vigiora, addon_client, cams, tmp_path):
+    app = make_app(addon_client, cams, tmp_path, env={**ENV, "TAMPER_RTSP_FALLBACK": "on"})
+    warm(app)
+    cams.now[1] = None                                   # the server has no frame...
+    cams.rtsp[1] = cams.black                            # ...but the camera's stream can be read directly
+    app.sample_all()
+    app.sample_all()
+    rtsp = [u for u in cams.urls if u.startswith("rtsp")]
+    assert rtsp and rtsp[0].endswith("_sub")             # the low-resolution stream first
+    assert labels(fake_vigiora) == ["tamper:covered"] and app.reachable[1] is True
+
+
+def test_rtsp_fallback_switch_is_written_out_off():
+    import yaml
+    from pathlib import Path
+    env = yaml.safe_load((Path(__file__).parent.parent / "compose.yaml").read_text())["services"]["tamper-watch"]["environment"]
+    assert env["TAMPER_RTSP_FALLBACK"] == "off" and Config.load(env).rtsp_fallback is False
+    assert Config.load({"TAMPER_RTSP_FALLBACK": "on"}).rtsp_fallback is True

@@ -1,4 +1,4 @@
-"""Tamper Watch: for every camera assigned to it, takes one frame of the low-resolution stream every N seconds and posts
+"""Tamper Watch: for every camera assigned to it, gets one frame from the server every N seconds and posts
 tamper:covered, tamper:blurred or tamper:moved when such a problem starts (after it was seen on a few samples in a
 row), and tamper:ok when the picture is normal again.
 
@@ -23,6 +23,7 @@ from vigiora_addon.events import ASSIGNMENT_CHANGED, CONFIG_UPDATED, TICK
 
 from .config import Config
 from .detect import measure
+from .frames import FrameResult, fetch_frame
 from .watch import OK, CameraWatch, Transition
 
 ADDON_ID = "tamper-watch"  # the same as "id" in vigiora-addon.yaml
@@ -35,10 +36,11 @@ NO_DETECTIONS = "this service does not report detections"
 OUTBOX_MAX = 200
 
 Grabber = Callable[[str, float], "np.ndarray | None"]
+FrameSource = Callable[[Client, int, float], FrameResult]
 
 
-def _default_grabber(url: str, timeout: float):
-    from .grab import grab_frame  # imported here so the tests need no RTSP
+def _rtsp_grabber(url: str, timeout: float):
+    from .grab import grab_frame  # only with TAMPER_RTSP_FALLBACK on
     return grab_frame(url, timeout)
 
 
@@ -46,18 +48,20 @@ def _default_grabber(url: str, timeout: float):
 class Sample:
     camera_id: int
     frame: np.ndarray | None
-    url: str = ""
+    url: str = ""                # where the frame came from: "server" or an RTSP address
     why: str = ""                # why there is no frame
+    skipped: bool = False        # not asked this round (the server said to wait): no change of any kind
     tags: list | None = None
     has_ptz: bool = False
 
 
 class TamperWatch:
-    def __init__(self, client: Client, env: dict[str, str], data_dir: str | Path, grab: Grabber = _default_grabber,
-                 clock: Callable[[], float] = time.time):
+    def __init__(self, client: Client, env: dict[str, str], data_dir: str | Path, grab: Grabber = _rtsp_grabber,
+                 clock: Callable[[], float] = time.time, frames: FrameSource = fetch_frame):
         self.client = client
         self.env = env
         self.grab = grab
+        self.frames = frames
         self.clock = clock
         self.dir = Path(data_dir) / "tamper-watch"
         self.cfg = Config.load(env)
@@ -66,7 +70,9 @@ class TamperWatch:
         self.running = True
         self.watches: dict[int, CameraWatch] = {}
         self.reachable: dict[int, bool] = {}
-        self.url_ok: dict[int, str] = {}       # the address that worked last time
+        self.url_ok: dict[int, str] = {}       # the RTSP address that worked last time (fallback only)
+        self.info: dict[int, tuple[float, object]] = {}   # camera -> (when read, its stream config)
+        self.not_before: dict[int, float] = {}            # camera -> do not ask for a frame before (Retry-After)
         self.outbox: list[tuple[int, Transition]] = []
         #: False once the server said it takes no detections from add-ons (Vigiora Server before 1.7.4): problems
         #: are then posted as plain results for the rest of the run.
@@ -78,6 +84,7 @@ class TamperWatch:
     def handle(self, ev) -> None:
         if ev.type == ASSIGNMENT_CHANGED:
             self.cameras = ev.data["monitors"]
+            self.info.clear()        # tags may have changed with the assignment: read them again
             for cam in ev.data["removed"]:
                 w = self.watches.pop(cam, None)
                 if w is not None and w.dirty:
@@ -106,26 +113,49 @@ class TamperWatch:
             self.watches[cam] = w
         return w
 
+    def camera_info(self, cam: int):
+        """The camera's stream config (tags, enabled, RTSP addresses), read again every TAMPER_CAMERA_INFO_SEC."""
+        now = time.monotonic()
+        got = self.info.get(cam)
+        if got is None or now - got[0] >= self.cfg.camera_info:
+            got = (now, self.client.stream_config(cam))
+            self.info[cam] = got
+        return got[1]
+
     def fetch(self, cam: int) -> Sample:
-        """Runs in a worker thread: the camera's addresses from the server, then one frame."""
+        """Runs in a worker thread: one frame of the camera, from the server (GET /api/hal/frame)."""
         try:
-            sc = self.client.stream_config(cam)
+            sc = self.camera_info(cam)
         except (NotFound, Forbidden) as e:
-            return Sample(cam, None, why=f"the server does not give its stream ({e})")
+            return Sample(cam, None, why=f"the server does not give this camera ({e})")
         except AddonError as e:
-            return Sample(cam, None, why=f"cannot ask the server for its stream ({e})")
+            return Sample(cam, None, why=f"cannot ask the server about this camera ({e})")
         tags, has_ptz = list(sc.tags), bool(sc.raw.get("has_ptz") or sc.raw.get("ptz"))
         if not sc.enabled:
             return Sample(cam, None, why="the camera is disabled", tags=tags, has_ptz=has_ptz)
-        urls = sc.rtsp_urls(host=self.client.settings.rtsp_host)
-        if self.url_ok.get(cam) in urls:
-            urls.remove(self.url_ok[cam])
-            urls.insert(0, self.url_ok[cam])
-        for url in urls:
-            frame = self.grab(url, self.cfg.grab_timeout)
-            if frame is not None and frame.size:
-                return Sample(cam, frame, url=url, tags=tags, has_ptz=has_ptz)
-        return Sample(cam, None, why="no frame from " + ", ".join(urls) if urls else "no address", tags=tags, has_ptz=has_ptz)
+        now = time.monotonic()
+        if self.not_before.get(cam, 0.0) > now:
+            return Sample(cam, None, why="the server asked to wait", skipped=True)
+        r = self.frames(self.client, cam, self.cfg.grab_timeout)
+        if r.frame is not None:
+            return Sample(cam, r.frame, url="server", tags=tags, has_ptz=has_ptz)
+        if r.status == 429:
+            # Over the server's frame limit: not a verdict on the camera. Retry-After is honoured; a 503's Retry-After
+            # (10 s) is shorter than a round, so it needs no wait of its own.
+            self.not_before[cam] = now + max(r.retry_after, 1.0)
+            log.debug("camera %s: frame limit reached; asking again in %.0f s", cam, max(r.retry_after, 1.0))
+            return Sample(cam, None, why=r.why, skipped=True)
+        if self.cfg.rtsp_fallback and r.status != 403:
+            urls = sc.rtsp_urls(host=self.client.settings.rtsp_host)
+            if self.url_ok.get(cam) in urls:
+                urls.remove(self.url_ok[cam])
+                urls.insert(0, self.url_ok[cam])
+            for url in urls:
+                frame = self.grab(url, self.cfg.grab_timeout)
+                if frame is not None and frame.size:
+                    return Sample(cam, frame, url=url, tags=tags, has_ptz=has_ptz)
+            return Sample(cam, None, why=f"no frame from the server ({r.why}) nor from RTSP", tags=tags, has_ptz=has_ptz)
+        return Sample(cam, None, why=f"no frame from the server ({r.why})", tags=tags, has_ptz=has_ptz)
 
     def sample_all(self) -> None:
         self.rounds += 1
@@ -159,6 +189,8 @@ class TamperWatch:
         token = settings.get("relearn", "").strip()
         if token and token != w.relearn_token:
             self._queue(cam, w.relearn(token, "asked to learn the view again (camera setting relearn)", now))
+        if s.skipped:
+            return
         if s.frame is None:
             # No frame is not a verdict: an unreachable camera is not "covered". Nothing is posted.
             if self.reachable.get(cam, True):
@@ -168,7 +200,8 @@ class TamperWatch:
         if not self.reachable.get(cam, True):
             log.info("camera %s: picture back", cam)
         self.reachable[cam] = True
-        self.url_ok[cam] = s.url
+        if s.url != "server":
+            self.url_ok[cam] = s.url
         checks = self.cfg.checks_for(settings, s.tags, s.has_ptz)
         self._queue(cam, w.observe(measure(s.frame, w.th), checks, now))
 

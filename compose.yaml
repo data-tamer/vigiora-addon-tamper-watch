@@ -26,7 +26,10 @@ services:
       TAMPER_DARK_LEVEL: "16"         # covered: 95% of the picture at most this bright (0-255)
       TAMPER_BLUR_RATIO: "0.6"        # blurred: sharpness below this share of the camera's normal
       TAMPER_MOVED_MATCH: "0.4"       # moved: less than this share of the picture's areas still in place
-      TAMPER_GRAB_TIMEOUT_SEC: "10"   # give up on a camera's stream after this long
+      TAMPER_GRAB_TIMEOUT_SEC: "10"   # give up on a camera's frame after this long
+      TAMPER_CAMERA_INFO_SEC: "600"   # how often a camera's tags and stream addresses are read again from the server
+      TAMPER_RTSP_FALLBACK: "off"     # "on": when the server gives no frame, read the camera's RTSP stream directly.
+                                      # Only works when the container can reach it (host networking); off by default.
       TAMPER_WORKERS: "2"             # cameras read at the same time
       LOG_LEVEL: INFO
     volumes:

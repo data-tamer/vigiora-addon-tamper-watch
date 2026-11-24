@@ -96,7 +96,9 @@ The defaults are written in the add-on's `compose.yaml`. A service-wide setting 
 | `TAMPER_DARK_LEVEL` | 16 | Covered when 95% of the picture is at most this bright (0 to 255). |
 | `TAMPER_BLUR_RATIO` | 0.6 | Blurred when sharpness falls below this share of normal. Lower it to report only stronger blur. |
 | `TAMPER_MOVED_MATCH` | 0.4 | Moved when less than this share of the view is still in place. Lower it to report only bigger moves. |
-| `TAMPER_GRAB_TIMEOUT_SEC` | 10 | Give up on a camera's stream after this many seconds. |
+| `TAMPER_GRAB_TIMEOUT_SEC` | 10 | Give up on a camera's frame after this many seconds. |
+| `TAMPER_CAMERA_INFO_SEC` | 600 | How often a camera's tags are read again from the server. Environment only. |
+| `TAMPER_RTSP_FALLBACK` | off | `on`: when the server has no frame for a camera, read the camera's RTSP stream from the server directly. Only for a container run with host networking (the server's RTSP listens on the server itself only). Environment only. |
 | `TAMPER_WORKERS` | 2 | Cameras read at the same time. |
 | `covered` (camera) | on | Turn the covered test off for this camera. |
 | `blurred` (camera) | on | Turn the blurred test off for this camera. |
@@ -116,11 +118,12 @@ Use Stop on the add-on on the Add-ons page. It stays enrolled and keeps checking
 
 ## Permissions
 
-It asks for `cameras:read` (which cameras are assigned, and their tags), `streams:read` (one frame of each assigned camera's low-resolution stream every 30 seconds) and `events:write` (the `tamper:` results). It reads frames from your Vigiora server only.
+It asks for `cameras:read` (which cameras are assigned, and their tags), `streams:read` (one frame of each assigned camera every 30 seconds, through `GET /api/hal/frame`) and `events:write` (the `tamper:` results) and `alerts:write` (covered, blurred and moved as detections, for alerts). It gets frames from your Vigiora server only, never from the cameras.
 
 ## Troubleshooting
 
 - **It does not appear on the Add-ons page.** Check the container's logs. "cannot enrol yet" means it cannot reach the server; "enrolment refused" means the key is wrong.
-- **A camera gets no results at all.** The log says "no picture" when Tamper Watch cannot read the camera's stream. An unreachable camera is never reported as covered. Check that the camera works in Vigiora.
+- **A camera gets no results at all.** The log says "no picture" once when the server has no frame for the camera (it is offline, or the server cannot read it), and "picture back" once when it has one again. An unreachable camera is never reported as covered. Check that the camera works in Vigiora.
+- **The log says the frame limit was reached.** The server gives at most 2 frames a second per camera. Tamper Watch then waits as long as the server asks and tries again; it does not count as a problem.
 - **Nothing is posted for the first minutes.** It is learning (10 checks). The container's log says "learned its colour view" (or "grey view" for night vision) for each camera when it is done.
 - **The camera's resolution changed.** Tamper Watch learns the view again by itself, and closes any open problem with `tamper:ok`.

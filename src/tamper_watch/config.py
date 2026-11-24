@@ -26,6 +26,7 @@ NUMBERS: dict[str, tuple[float, float, float]] = {
     "TAMPER_BLUR_RATIO": (0.6, 0.0, 1.0),
     "TAMPER_MOVED_MATCH": (0.4, 0.0, 1.0),
     "TAMPER_GRAB_TIMEOUT_SEC": (10, 2, 60),
+    "TAMPER_CAMERA_INFO_SEC": (600, 30, 86400),
     "TAMPER_WORKERS": (2, 1, 8),
 }
 SWITCHES = {"TAMPER_COVERED": True, "TAMPER_BLURRED": True, "TAMPER_MOVED": True}
@@ -52,7 +53,9 @@ class Config:
     learn: int = 10
     adapt: float = 0.02
     grab_timeout: float = 10
+    camera_info: float = 600
     workers: int = 2
+    rtsp_fallback: bool = False
     th: Thresholds = field(default_factory=Thresholds)
     checks: Checks = field(default_factory=Checks)
 
@@ -62,7 +65,7 @@ class Config:
         merged = {k: v for k, v in env.items() if k.startswith("TAMPER_")}
         for k, v in (server or {}).items():  # the server may name them TAMPER_BLUR_RATIO or blur_ratio
             name = k if k.startswith("TAMPER_") else "TAMPER_" + k.upper()
-            if name in NUMBERS or name in SWITCHES:
+            if name in NUMBERS or name in SWITCHES or name == "TAMPER_RTSP_FALLBACK":
                 merged[name] = v
         n: dict[str, float] = {}
         for name, (default, lo, hi) in NUMBERS.items():
@@ -78,6 +81,7 @@ class Config:
         return cls(
             interval=n["TAMPER_INTERVAL_SEC"], confirm=int(n["TAMPER_CONFIRM_SAMPLES"]), learn=int(n["TAMPER_LEARN_SAMPLES"]),
             adapt=n["TAMPER_ADAPT_RATE"], grab_timeout=n["TAMPER_GRAB_TIMEOUT_SEC"], workers=int(n["TAMPER_WORKERS"]),
+            camera_info=n["TAMPER_CAMERA_INFO_SEC"], rtsp_fallback=switch(merged.get("TAMPER_RTSP_FALLBACK"), False),
             th=Thresholds(flat_spread=n["TAMPER_FLAT_SPREAD"], dark_level=n["TAMPER_DARK_LEVEL"],
                           blur_ratio=n["TAMPER_BLUR_RATIO"], moved_match=n["TAMPER_MOVED_MATCH"]),
             checks=Checks(**{k[len("TAMPER_"):].lower(): switch(merged.get(k), d) for k, d in SWITCHES.items()}),

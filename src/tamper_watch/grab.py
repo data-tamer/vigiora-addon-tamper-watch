@@ -1,4 +1,4 @@
-"""Takes one frame from an RTSP address with OpenCV's own FFmpeg reader (inside the opencv-python-headless wheel, so
+"""The RTSP fallback (TAMPER_RTSP_FALLBACK=on, for host networking): takes one frame from an RTSP address with OpenCV's own FFmpeg reader (inside the opencv-python-headless wheel, so
 the image needs no system FFmpeg). The connection is opened, a few frames are read, and it is closed again: between
 samples the add-on holds no stream and decodes nothing.
 """
